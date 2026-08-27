@@ -171,6 +171,7 @@ def inicio():
 
 
 @app.get("/api/hospitais")
+@app.get("/api/hospitais")
 def api_buscar_hospitais():
     cep_recebido = request.args.get("cep", "").strip()
     cep_numerico = re.sub(r"\D", "", cep_recebido)
@@ -178,8 +179,10 @@ def api_buscar_hospitais():
         return jsonify({"erro": "Forneça um CEP válido com 8 dígitos."}), 400
 
     cep_formatado = f"{cep_numerico[:5]}-{cep_numerico[5:]}"
-    if not consulta_em_andamento.acquire(blocking=False):
-        return jsonify({"erro": "Outra consulta está em andamento. Tente novamente."}), 429
+
+    # Aguarda até 60 segundos na fila em vez de rejeitar de imediato
+    if not consulta_em_andamento.acquire(blocking=True, timeout=60):
+        return jsonify({"erro": "Servidor ocupado. Tente novamente em instantes."}), 429
 
     try:
         try:

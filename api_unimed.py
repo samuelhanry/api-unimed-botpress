@@ -1,5 +1,5 @@
 """API para consultar hospitais no Guia Médico da Unimed."""
-
+import os
 import re
 import time
 
@@ -24,6 +24,9 @@ class ErroNaConsulta(RuntimeError):
 def buscar_hospitais_unimed(cep: str) -> list[dict[str, str]]:
     """Pesquisa o CEP no Guia Médico e retorna os hospitais encontrados."""
     chrome_options = webdriver.ChromeOptions()
+    chrome_options.add_argument('--headless')  # Roda sem interface gráfica (invisível)
+    chrome_options.add_argument('--no-sandbox')  # Permissão de segurança necessária no Linux
+    chrome_options.add_argument('--disable-dev-shm-usage')  # Evita travamentos por falta de memória
 
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
@@ -188,6 +191,10 @@ def api_buscar_hospitais():
 
 if __name__ == "__main__":
     from waitress import serve
+
+    # Pega a porta do Render ou usa 5000 se estiver no computador
+    porta = int(os.environ.get("PORT", 5000))
+    # O host '0.0.0.0' é obrigatório para acessar pela internet
 
     print("API disponível em http://127.0.0.1:5000")
     serve(app, host="0.0.0.0", port=5000, threads=4)

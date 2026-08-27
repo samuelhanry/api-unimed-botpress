@@ -1,22 +1,24 @@
-# 1. Imagem base do Python
-FROM python:3.10-slim
+FROM python:3.12-slim-bookworm
 
-# 2. Instala dependências e adiciona a chave do Google Chrome no formato moderno
-RUN apt-get update && apt-get install -y wget gnupg curl \
-    && curl -sS https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
-    && apt-get update \
-    && apt-get install -y google-chrome-stable \
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    CHROME_BIN=/usr/bin/chromium
+
+# Chromium e ChromeDriver vêm do mesmo repositório e possuem versões compatíveis.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        chromium \
+        chromium-driver \
+        fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
-# 3. Define a pasta de trabalho
 WORKDIR /app
 
-# 4. Copia os arquivos do projeto para o servidor
-COPY . .
-
-# 5. Instala as bibliotecas do projeto
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 6. Comando para iniciar a API
+COPY api_unimed.py .
+
+# O Render encerra o container se o processo principal não permanecer ativo.
 CMD ["python", "api_unimed.py"]

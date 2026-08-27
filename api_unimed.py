@@ -1,6 +1,7 @@
 """API para consultar hospitais no Guia Médico da Unimed."""
 import os
 import re
+import threading
 import time
 
 import requests
@@ -15,6 +16,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 app = Flask(__name__)
 CORS(app)
+consulta_em_andamento = threading.Lock()
 
 
 class ErroNaConsulta(RuntimeError):
@@ -24,18 +26,20 @@ class ErroNaConsulta(RuntimeError):
 def buscar_hospitais_unimed(cep: str) -> list[dict[str, str]]:
     """Pesquisa o CEP no Guia Médico e retorna os hospitais encontrados."""
     chrome_options = webdriver.ChromeOptions()
-    chrome_options.add_argument('--headless')  # Roda sem interface gráfica (invisível)
-    chrome_options.add_argument('--no-sandbox')  # Permissão de segurança necessária no Linux
-    chrome_options.add_argument('--disable-dev-shm-usage')  # Evita travamentos por falta de memória
-
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--disable-extensions")
+    chrome_options.add_argument("--remote-debugging-pipe")
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument(
         "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 Chrome/124.0 Safari/537.36"
     )
+    chrome_bin = os.environ.get("CHROME_BIN")
+    if chrome_bin:
+        chrome_options.binary_location = chrome_bin
 
     try:
         driver = webdriver.Chrome(options=chrome_options)
@@ -174,11 +178,17 @@ def api_buscar_hospitais():
         return jsonify({"erro": "Forneça um CEP válido com 8 dígitos."}), 400
 
     cep_formatado = f"{cep_numerico[:5]}-{cep_numerico[5:]}"
+    if not consulta_em_andamento.acquire(blocking=False):
+        return jsonify({"erro": "Outra consulta está em andamento. Tente novamente."}), 429
+
     try:
-        resultado = buscar_hospitais_unimed(cep_formatado)
-    except ErroNaConsulta as exc:
-        app.logger.exception("Erro ao pesquisar o CEP %s", cep_formatado)
-        return jsonify({"erro": str(exc)}), 502
+        try:
+            resultado = buscar_hospitais_unimed(cep_formatado)
+        except ErroNaConsulta as exc:
+            app.logger.exception("Erro ao pesquisar o CEP %s", cep_formatado)
+            return jsonify({"erro": str(exc)}), 502
+    finally:
+        consulta_em_andamento.release()
 
     return jsonify(
         {
@@ -192,9 +202,6 @@ def api_buscar_hospitais():
 if __name__ == "__main__":
     from waitress import serve
 
-    # Pega a porta do Render ou usa 5000 se estiver no computador
     porta = int(os.environ.get("PORT", 5000))
-    # O host '0.0.0.0' é obrigatório para acessar pela internet
-
-    print("API disponível em http://127.0.0.1:5000")
-    serve(app, host="0.0.0.0", port=5000, threads=4)
+    print(f"API disponível na porta {porta}")
+    serve(app, host="0.0.0.0", port=porta, threads=2)

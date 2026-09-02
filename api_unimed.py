@@ -19,35 +19,39 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 consulta_em_andamento = threading.Lock()
 
+# 1. Variável global para manter o navegador sempre aberto (Singleton)
+navegador_global = None
+
 class ErroNaConsulta(RuntimeError):
     """Erro esperado ao consultar o site da Unimed."""
-@lru_cache(maxsize=100)
-def buscar_hospitais_unimed(cep: str) -> list[dict[str, str]]:
-    """Pesquisa o CEP no Guia Médico e retorna os hospitais com carregamento ultra-rápido."""
-    print(f"▶️ [PASSO 1] Iniciando busca para o CEP {cep}...")
+
+def obter_navegador():
+    """Gerencia a instância do Chrome para reutilizá-la e poupar tempo de inicialização."""
+    global navegador_global
+    
+    # Verifica se o navegador já está aberto e funcionando
+    try:
+        if navegador_global:
+            _ = navegador_global.current_url  # Apenas um teste rápido para ver se não travou
+            return navegador_global
+    except Exception:
+        navegador_global = None  # Se travou, limpamos para recriar
+
+    print("▶️ [SISTEMA] Iniciando uma nova instância do Chrome (apenas uma vez)...")
     chrome_options = webdriver.ChromeOptions()
-
-    # 1. Estratégia Eager: prossegue assim que o HTML base é carregado
     chrome_options.page_load_strategy = 'eager'
-
-    # 2. Argumentos de desempenho e execução em segundo plano
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--disable-extensions")
-    chrome_options.add_argument("--blink-settings=imagesEnabled=false")  # Bloqueia imagens
+    chrome_options.add_argument("--blink-settings=imagesEnabled=false")
     chrome_options.add_argument("--window-size=1280,720")
-    chrome_options.add_argument(
-        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 Chrome/124.0 Safari/537.36"
-    )
-
-    # 3. Preferências do perfil para proibir downloads de imagens e fontes
+    
     prefs = {
         "profile.managed_default_content_settings.images": 2,
         "profile.managed_default_content_settings.stylesheets": 2,
-        "profile.managed_default_content_settings.popups": 2,
+        "profile.default_content_setting_values.notifications": 2
     }
     chrome_options.add_experimental_option("prefs", prefs)
 
@@ -55,137 +59,98 @@ def buscar_hospitais_unimed(cep: str) -> list[dict[str, str]]:
     if chrome_bin:
         chrome_options.binary_location = chrome_bin
 
+    navegador_global = webdriver.Chrome(options=chrome_options)
+    
+    # 2. Interceptação de Rede: Bloqueia lixo inútil para carregar a página muito mais rápido!
+    navegador_global.execute_cdp_cmd("Network.enable", {})
+    navegador_global.execute_cdp_cmd("Network.setBlockedURLs", {
+        "urls": ["*google-analytics.com*", "*googletagmanager.com*", "*.woff2", "*.woff", "*.ttf", "*hotjar.com*"]
+    })
+    
+    return navegador_global
+
+@lru_cache(maxsize=100)
+def buscar_hospitais_unimed(cep: str) -> list[dict[str, str]]:
+    """Pesquisa o CEP no Guia Médico e retorna os hospitais com carregamento ultra-rápido."""
+    print(f"▶️ [PASSO 1] Iniciando busca para o CEP {cep}...")
+    
     try:
-        print("▶️ [PASSO 2] Abrindo o navegador Chrome invisível (Isso pode demorar no Render)...")
-        driver = webdriver.Chrome(options=chrome_options)
+        driver = obter_navegador()
     except WebDriverException as exc:
-        raise ErroNaConsulta(
-            "Não foi possível iniciar o Chrome. Verifique se o Google Chrome "
-            "está instalado e atualizado."
-        ) from exc
+        raise ErroNaConsulta("Não foi possível iniciar o Chrome.") from exc
 
     try:
-        print("▶️ [PASSO 3] Buscando coordenadas do CEP na BrasilAPI...")
+        print("▶️ [PASSO 2] Buscando coordenadas na BrasilAPI...")
         resposta_cep = requests.get(
             f"https://brasilapi.com.br/api/cep/v2/{re.sub(r'\D', '', cep)}",
-            timeout=15,
+            timeout=10,
         )
         resposta_cep.raise_for_status()
         coordenadas = resposta_cep.json()["location"]["coordinates"]
-        driver.execute_cdp_cmd(
-            "Browser.grantPermissions",
-            {"origin": "https://www.unimed.coop.br", "permissions": ["geolocation"]},
-        )
-        driver.execute_cdp_cmd(
-            "Emulation.setGeolocationOverride",
-            {
-                "latitude": float(coordenadas["latitude"]),
-                "longitude": float(coordenadas["longitude"]),
-                "accuracy": 50,
-            },
-        )
-
-        print("▶️ [PASSO 4] Acessando o site do Guia Médico da Unimed...")
-        driver.get("https://www.unimed.coop.br/site/web/guest/guia-medico")
-        wait = WebDriverWait(driver, 30)
         
-        print("▶️ [PASSO 5] Procurando o campo de serviço para digitar 'hospital'...")
-        botoes_cookie = driver.find_elements(
-            By.CSS_SELECTOR, "[data-testid='actionButton-reject']"
-        )
+        # Injeta localização falsa
+        driver.execute_cdp_cmd("Browser.grantPermissions", {"origin": "https://www.unimed.coop.br", "permissions": ["geolocation"]})
+        driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {
+            "latitude": float(coordenadas["latitude"]),
+            "longitude": float(coordenadas["longitude"]),
+            "accuracy": 50,
+        })
+
+        print("▶️ [PASSO 3] Acessando Unimed (O carregamento será mais rápido agora)...")
+        driver.get("https://www.unimed.coop.br/site/web/guest/guia-medico")
+        wait = WebDriverWait(driver, 20) # Reduzimos a tolerância para 20s
+        
+        print("▶️ [PASSO 4] Procurando o campo de serviço...")
+        botoes_cookie = driver.find_elements(By.CSS_SELECTOR, "[data-testid='actionButton-reject']")
         if botoes_cookie:
-            print("▶️ [PASSO 6] Fechando aviso de cookies...")
             driver.execute_script("arguments[0].click()", botoes_cookie[0])
 
-        campo_servico = wait.until(
-            EC.presence_of_element_located((By.ID, "react-select-2-input"))
-        )
+        campo_servico = wait.until(EC.presence_of_element_located((By.ID, "react-select-2-input")))
         opcao_hospital = None
+        
         for _ in range(3):
             driver.execute_script("arguments[0].focus()", campo_servico)
             campo_servico.clear()
             campo_servico.send_keys("hospital")
             try:
-                opcao_hospital = WebDriverWait(driver, 15).until(
-                    EC.presence_of_element_located(
-                        (
-                            By.XPATH,
-                            "//div[contains(@id, 'react-select-2-option')]"
-                            "[normalize-space(.)='Hospital']",
-                        )
-                    )
+                opcao_hospital = WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, "//div[contains(@id, 'react-select-2-option')][normalize-space(.)='Hospital']"))
                 )
-                print("✅ [SUCESSO] Opção 'Hospital' encontrada e selecionada!")
                 break
             except TimeoutException:
                 campo_servico.clear()
                 time.sleep(1)
         
         if opcao_hospital is None:
-            raise ErroNaConsulta(
-                "O site da Unimed não retornou a opção Hospital. Tente novamente."
-            )
+            raise ErroNaConsulta("O site da Unimed não retornou a opção Hospital.")
 
         driver.execute_script("arguments[0].click()", opcao_hospital)
         
-        print("▶️ [PASSO 7] Clicando no botão de pesquisar e aguardando resultados...")
+        print("▶️ [PASSO 5] Clicando em pesquisar...")
         botao_pesquisar = wait.until(
-            lambda navegador: next(
-                (
-                    elemento
-                    for elemento in navegador.find_elements(
-                        By.CSS_SELECTOR, "button[type='submit']"
-                    )
-                    if elemento.is_displayed()
-                    and elemento.text.strip() == "Pesquisar"
-                ),
-                False,
-            )
+            lambda nav: next((el for el in nav.find_elements(By.CSS_SELECTOR, "button[type='submit']") if el.is_displayed() and el.text.strip() == "Pesquisar"), False)
         )
         driver.execute_script("arguments[0].click()", botao_pesquisar)
-        wait.until(lambda navegador: "#/results/" in navegador.current_url)
-        wait.until(
-            EC.presence_of_element_located(
-                (By.CSS_SELECTOR, ".ProviderCard .Provider--name")
-            )
-        )
+        wait.until(lambda nav: "#/results/" in nav.current_url)
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".ProviderCard .Provider--name")))
 
-        print("✅ [SUCESSO] Dados extraídos da página com sucesso!")
+        print("✅ [SUCESSO] Dados extraídos!")
         soup = BeautifulSoup(driver.page_source, "html.parser")
         hospitais = []
         for card in soup.select(".ProviderCard"):
             elem_nome = card.select_one(".Provider--name")
-            elem_endereco = card.select_one(".ProviderAddressAsGrid--address-link")
-            elem_distancia = card.select_one(".ProviderAddressAdditional")
             if elem_nome:
-                hospitais.append(
-                    {
-                        "hospital": elem_nome.get_text(" ", strip=True),
-                        "endereco": (
-                            elem_endereco.get_text(" ", strip=True)
-                            if elem_endereco
-                            else "Endereço não informado"
-                        ),
-                        "distancia": (
-                            elem_distancia.get_text(" ", strip=True)
-                            if elem_distancia
-                            else None
-                        ),
-                    }
-                )
+                elem_endereco = card.select_one(".ProviderAddressAsGrid--address-link")
+                elem_distancia = card.select_one(".ProviderAddressAdditional")
+                hospitais.append({
+                    "hospital": elem_nome.get_text(" ", strip=True),
+                    "endereco": elem_endereco.get_text(" ", strip=True) if elem_endereco else "Endereço não informado",
+                    "distancia": elem_distancia.get_text(" ", strip=True) if elem_distancia else None,
+                })
         return hospitais
-    except ErroNaConsulta:
-        raise
-    except requests.RequestException as exc:
-        raise ErroNaConsulta("Não foi possível localizar o CEP informado.") from exc
-    except (TimeoutException, WebDriverException) as exc:
-        raise ErroNaConsulta(
-            "O site da Unimed demorou para responder. Tente novamente em instantes."
-        ) from exc
     except Exception as exc:
-        raise ErroNaConsulta("Não foi possível concluir a consulta na Unimed.") from exc
-    finally:
-        driver.quit()
+        raise ErroNaConsulta("Houve uma lentidão no site da Unimed. Tente novamente.") from exc
+    # REMOVEMOS O driver.quit() DAQUI! O navegador vai continuar vivo para a próxima pessoa!
 
 @app.get("/")
 def inicio():
@@ -200,7 +165,6 @@ def api_buscar_hospitais():
 
     cep_formatado = f"{cep_numerico[:5]}-{cep_numerico[5:]}"
 
-    # Aguarda até 60 segundos na fila em vez de rejeitar de imediato
     if not consulta_em_andamento.acquire(blocking=True, timeout=60):
         return jsonify({"erro": "Servidor ocupado. Tente novamente em instantes."}), 429
 
@@ -213,17 +177,10 @@ def api_buscar_hospitais():
     finally:
         consulta_em_andamento.release()
 
-    return jsonify(
-        {
-            "cep_buscado": cep_formatado,
-            "quantidade": len(resultado),
-            "hospitais": resultado,
-        }
-    )
+    return jsonify({"cep_buscado": cep_formatado, "quantidade": len(resultado), "hospitais": resultado})
 
 if __name__ == "__main__":
     from waitress import serve
-
     porta = int(os.environ.get("PORT", 5000))
     print(f"API disponível na porta {porta}")
     serve(app, host="0.0.0.0", port=porta, threads=2)

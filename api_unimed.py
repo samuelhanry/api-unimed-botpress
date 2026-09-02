@@ -18,10 +18,8 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 consulta_em_andamento = threading.Lock()
 
-
 class ErroNaConsulta(RuntimeError):
     """Erro esperado ao consultar o site da Unimed."""
-
 
 def buscar_hospitais_unimed(cep: str) -> list[dict[str, str]]:
     """Pesquisa o CEP no Guia Médico e retorna os hospitais com carregamento ultra-rápido."""
@@ -69,7 +67,6 @@ def buscar_hospitais_unimed(cep: str) -> list[dict[str, str]]:
         print("▶️ [PASSO 3] Buscando coordenadas do CEP na BrasilAPI...")
         resposta_cep = requests.get(
             f"https://brasilapi.com.br/api/cep/v2/{re.sub(r'\D', '', cep)}",
-            print("▶️ [PASSO 4] Acessando o site do Guia Médico da Unimed...")
             timeout=15,
         )
         resposta_cep.raise_for_status()
@@ -87,15 +84,16 @@ def buscar_hospitais_unimed(cep: str) -> list[dict[str, str]]:
             },
         )
 
+        print("▶️ [PASSO 4] Acessando o site do Guia Médico da Unimed...")
         driver.get("https://www.unimed.coop.br/site/web/guest/guia-medico")
         wait = WebDriverWait(driver, 30)
+        
         print("▶️ [PASSO 5] Procurando o campo de serviço para digitar 'hospital'...")
-
         botoes_cookie = driver.find_elements(
             By.CSS_SELECTOR, "[data-testid='actionButton-reject']"
         )
         if botoes_cookie:
-            print("▶️ [PASSO 6] Clicando no botão de pesquisar e aguardando resultados...")
+            print("▶️ [PASSO 6] Fechando aviso de cookies...")
             driver.execute_script("arguments[0].click()", botoes_cookie[0])
 
         campo_servico = wait.until(
@@ -116,7 +114,7 @@ def buscar_hospitais_unimed(cep: str) -> list[dict[str, str]]:
                         )
                     )
                 )
-                print("✅ [SUCESSO] Dados extraídos da página com sucesso!")
+                print("✅ [SUCESSO] Opção 'Hospital' encontrada e selecionada!")
                 break
             except TimeoutException:
                 campo_servico.clear()
@@ -128,6 +126,8 @@ def buscar_hospitais_unimed(cep: str) -> list[dict[str, str]]:
             )
 
         driver.execute_script("arguments[0].click()", opcao_hospital)
+        
+        print("▶️ [PASSO 7] Clicando no botão de pesquisar e aguardando resultados...")
         botao_pesquisar = wait.until(
             lambda navegador: next(
                 (
@@ -149,6 +149,7 @@ def buscar_hospitais_unimed(cep: str) -> list[dict[str, str]]:
             )
         )
 
+        print("✅ [SUCESSO] Dados extraídos da página com sucesso!")
         soup = BeautifulSoup(driver.page_source, "html.parser")
         hospitais = []
         for card in soup.select(".ProviderCard"):
@@ -185,13 +186,10 @@ def buscar_hospitais_unimed(cep: str) -> list[dict[str, str]]:
     finally:
         driver.quit()
 
-
 @app.get("/")
 def inicio():
     return jsonify({"status": "online", "uso": "/api/hospitais?cep=33080-315"})
 
-
-@app.get("/api/hospitais")
 @app.get("/api/hospitais")
 def api_buscar_hospitais():
     cep_recebido = request.args.get("cep", "").strip()
@@ -221,7 +219,6 @@ def api_buscar_hospitais():
             "hospitais": resultado,
         }
     )
-
 
 if __name__ == "__main__":
     from waitress import serve

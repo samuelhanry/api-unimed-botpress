@@ -39,7 +39,7 @@ def obter_navegador():
 
     print("▶️ [SISTEMA] Iniciando uma nova instância do Chrome (apenas uma vez)...")
     chrome_options = webdriver.ChromeOptions()
-    chrome_options.page_load_strategy = 'eager'
+    chrome_options.page_load_strategy = 'none'
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")

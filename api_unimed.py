@@ -3,6 +3,7 @@ import os
 import re
 import threading
 import time
+from functools import lru_cache
 
 import requests
 from bs4 import BeautifulSoup

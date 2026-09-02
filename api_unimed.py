@@ -25,6 +25,7 @@ class ErroNaConsulta(RuntimeError):
 
 def buscar_hospitais_unimed(cep: str) -> list[dict[str, str]]:
     """Pesquisa o CEP no Guia Médico e retorna os hospitais com carregamento ultra-rápido."""
+    print(f"▶️ [PASSO 1] Iniciando busca para o CEP {cep}...")
     chrome_options = webdriver.ChromeOptions()
 
     # 1. Estratégia Eager: prossegue assim que o HTML base é carregado
@@ -56,6 +57,7 @@ def buscar_hospitais_unimed(cep: str) -> list[dict[str, str]]:
         chrome_options.binary_location = chrome_bin
 
     try:
+        print("▶️ [PASSO 2] Abrindo o navegador Chrome invisível (Isso pode demorar no Render)...")
         driver = webdriver.Chrome(options=chrome_options)
     except WebDriverException as exc:
         raise ErroNaConsulta(
@@ -64,8 +66,10 @@ def buscar_hospitais_unimed(cep: str) -> list[dict[str, str]]:
         ) from exc
 
     try:
+        print("▶️ [PASSO 3] Buscando coordenadas do CEP na BrasilAPI...")
         resposta_cep = requests.get(
             f"https://brasilapi.com.br/api/cep/v2/{re.sub(r'\D', '', cep)}",
+            print("▶️ [PASSO 4] Acessando o site do Guia Médico da Unimed...")
             timeout=15,
         )
         resposta_cep.raise_for_status()
@@ -85,11 +89,13 @@ def buscar_hospitais_unimed(cep: str) -> list[dict[str, str]]:
 
         driver.get("https://www.unimed.coop.br/site/web/guest/guia-medico")
         wait = WebDriverWait(driver, 30)
+        print("▶️ [PASSO 5] Procurando o campo de serviço para digitar 'hospital'...")
 
         botoes_cookie = driver.find_elements(
             By.CSS_SELECTOR, "[data-testid='actionButton-reject']"
         )
         if botoes_cookie:
+            print("▶️ [PASSO 6] Clicando no botão de pesquisar e aguardando resultados...")
             driver.execute_script("arguments[0].click()", botoes_cookie[0])
 
         campo_servico = wait.until(
@@ -110,11 +116,12 @@ def buscar_hospitais_unimed(cep: str) -> list[dict[str, str]]:
                         )
                     )
                 )
+                print("✅ [SUCESSO] Dados extraídos da página com sucesso!")
                 break
             except TimeoutException:
                 campo_servico.clear()
                 time.sleep(1)
-
+        
         if opcao_hospital is None:
             raise ErroNaConsulta(
                 "O site da Unimed não retornou a opção Hospital. Tente novamente."

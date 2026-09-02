@@ -19,7 +19,6 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 consulta_em_andamento = threading.Lock()
 
-# 1. Variável global para manter o navegador sempre aberto (Singleton)
 navegador_global = None
 
 class ErroNaConsulta(RuntimeError):
@@ -29,17 +28,19 @@ def obter_navegador():
     """Gerencia a instância do Chrome para reutilizá-la e poupar tempo de inicialização."""
     global navegador_global
     
-    # Verifica se o navegador já está aberto e funcionando
     try:
         if navegador_global:
-            _ = navegador_global.current_url  # Apenas um teste rápido para ver se não travou
+            _ = navegador_global.current_url
             return navegador_global
     except Exception:
-        navegador_global = None  # Se travou, limpamos para recriar
+        navegador_global = None
 
     print("▶️ [SISTEMA] Iniciando uma nova instância do Chrome (apenas uma vez)...")
     chrome_options = webdriver.ChromeOptions()
-    chrome_options.page_load_strategy = 'none'
+    
+    # Voltamos para 'eager' para garantir que a base do site exista antes de buscar os botões
+    chrome_options.page_load_strategy = 'eager' 
+    
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
@@ -61,7 +62,6 @@ def obter_navegador():
 
     navegador_global = webdriver.Chrome(options=chrome_options)
     
-    # 2. Interceptação de Rede: Bloqueia lixo inútil para carregar a página muito mais rápido!
     navegador_global.execute_cdp_cmd("Network.enable", {})
     navegador_global.execute_cdp_cmd("Network.setBlockedURLs", {
         "urls": ["*google-analytics.com*", "*googletagmanager.com*", "*.woff2", "*.woff", "*.ttf", "*hotjar.com*"]
@@ -71,7 +71,7 @@ def obter_navegador():
 
 @lru_cache(maxsize=100)
 def buscar_hospitais_unimed(cep: str) -> list[dict[str, str]]:
-    """Pesquisa o CEP no Guia Médico e retorna os hospitais com carregamento ultra-rápido."""
+    """Pesquisa o CEP no Guia Médico e retorna os hospitais com carregamento estável."""
     print(f"▶️ [PASSO 1] Iniciando busca para o CEP {cep}...")
     
     try:
@@ -88,7 +88,6 @@ def buscar_hospitais_unimed(cep: str) -> list[dict[str, str]]:
         resposta_cep.raise_for_status()
         coordenadas = resposta_cep.json()["location"]["coordinates"]
         
-        # Injeta localização falsa
         driver.execute_cdp_cmd("Browser.grantPermissions", {"origin": "https://www.unimed.coop.br", "permissions": ["geolocation"]})
         driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {
             "latitude": float(coordenadas["latitude"]),
@@ -96,9 +95,11 @@ def buscar_hospitais_unimed(cep: str) -> list[dict[str, str]]:
             "accuracy": 50,
         })
 
-        print("▶️ [PASSO 3] Acessando Unimed (O carregamento será mais rápido agora)...")
+        print("▶️ [PASSO 3] Acessando Unimed...")
         driver.get("https://www.unimed.coop.br/site/web/guest/guia-medico")
-        wait = WebDriverWait(driver, 20) # Reduzimos a tolerância para 20s
+        
+        # Aumentamos a paciência do robô para 40 segundos, evitando que ele desista cedo
+        wait = WebDriverWait(driver, 40) 
         
         print("▶️ [PASSO 4] Procurando o campo de serviço...")
         botoes_cookie = driver.find_elements(By.CSS_SELECTOR, "[data-testid='actionButton-reject']")
@@ -113,7 +114,7 @@ def buscar_hospitais_unimed(cep: str) -> list[dict[str, str]]:
             campo_servico.clear()
             campo_servico.send_keys("hospital")
             try:
-                opcao_hospital = WebDriverWait(driver, 10).until(
+                opcao_hospital = WebDriverWait(driver, 15).until(
                     EC.presence_of_element_located((By.XPATH, "//div[contains(@id, 'react-select-2-option')][normalize-space(.)='Hospital']"))
                 )
                 break
@@ -150,7 +151,6 @@ def buscar_hospitais_unimed(cep: str) -> list[dict[str, str]]:
         return hospitais
     except Exception as exc:
         raise ErroNaConsulta("Houve uma lentidão no site da Unimed. Tente novamente.") from exc
-    # REMOVEMOS O driver.quit() DAQUI! O navegador vai continuar vivo para a próxima pessoa!
 
 @app.get("/")
 def inicio():

@@ -20,7 +20,7 @@ consulta_em_andamento = threading.Lock()
 
 class ErroNaConsulta(RuntimeError):
     """Erro esperado ao consultar o site da Unimed."""
-
+@lru_cache(maxsize=100)
 def buscar_hospitais_unimed(cep: str) -> list[dict[str, str]]:
     """Pesquisa o CEP no Guia Médico e retorna os hospitais com carregamento ultra-rápido."""
     print(f"▶️ [PASSO 1] Iniciando busca para o CEP {cep}...")

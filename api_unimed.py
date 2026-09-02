@@ -24,19 +24,33 @@ class ErroNaConsulta(RuntimeError):
 
 
 def buscar_hospitais_unimed(cep: str) -> list[dict[str, str]]:
-    """Pesquisa o CEP no Guia Médico e retorna os hospitais encontrados."""
+    """Pesquisa o CEP no Guia Médico e retorna os hospitais com carregamento ultra-rápido."""
     chrome_options = webdriver.ChromeOptions()
+
+    # 1. Estratégia Eager: prossegue assim que o HTML base é carregado
+    chrome_options.page_load_strategy = 'eager'
+
+    # 2. Argumentos de desempenho e execução em segundo plano
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--disable-extensions")
-    chrome_options.add_argument("--remote-debugging-pipe")
-    chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument("--blink-settings=imagesEnabled=false")  # Bloqueia imagens
+    chrome_options.add_argument("--window-size=1280,720")
     chrome_options.add_argument(
         "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 Chrome/124.0 Safari/537.36"
     )
+
+    # 3. Preferências do perfil para proibir downloads de imagens e fontes
+    prefs = {
+        "profile.managed_default_content_settings.images": 2,
+        "profile.managed_default_content_settings.stylesheets": 2,
+        "profile.managed_default_content_settings.popups": 2,
+    }
+    chrome_options.add_experimental_option("prefs", prefs)
+
     chrome_bin = os.environ.get("CHROME_BIN")
     if chrome_bin:
         chrome_options.binary_location = chrome_bin
